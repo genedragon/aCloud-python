@@ -1,4 +1,5 @@
 import boto3
+import botocore
 import click
 
 session = boto3.Session(profile_name='gene')
@@ -15,8 +16,84 @@ def filter_instances(project):
     return instances
 
 @click.group()
+def cli():
+    """Gene manages snapshots"""
+
+@cli.group('snapshots')
+def snapshots():
+    """Commands for snapshots"""
+
+@snapshots.command('list')
+@click.option('--project', default=None,
+    help="Only snapshots for project (tag Project:<name>)")
+def list_snapshots(project):
+    "List Snapshots"
+
+    instances = filter_instances(project)
+
+    for i in instances:
+        for v in i.volumes.all():
+            for s in v.snapshots.all():
+                print(", ".join((
+                s.id,
+                v.id,
+                i.id,
+                s.state,
+                s.progress,
+                s.start_time.strftime("%c")
+                )))
+
+    return
+
+@cli.group('volumes')
+def volumes():
+    """Commands for volumes"""
+
+@volumes.command('list')
+@click.option('--project', default=None,
+    help="Only volumes for project (tag Project:<name>)")
+def list_volumes(project):
+    "List Volumes"
+
+    instances = filter_instances(project)
+
+    for i in instances:
+        for v in i.volumes.all():
+            print(", ".join((
+                v.id,
+                i.id,
+                v.state,
+                str(v.size) + "GiB",
+                v.encrypted and "Encrypted" or "Not Encrypted"
+            )))
+
+    return
+
+@cli.group('instances')
 def instances():
     """Commands for instances"""
+@instances.command('snapshot',
+    help="Create snapshot")
+@click.option('--project', default=None,
+    help="Only instances for project (tag Project:<name>)")
+def create_snapshots(project):
+    "Create snapshots for EC2 instances"
+
+    instances = filter_instances(project)
+
+    for i in instances:
+        print("Stopping {0}...".format(i.id))
+        i.stop()
+        i.wait_until_stopped()
+        for v in i.volumes.all():
+            print("Creating sanpshot of {0}".format(v.id))
+            v.create_snapshot(Description="Created by aCloud Python project")
+        i.start()
+        print("Starting {0}...".format(i.id))
+        i.wait_until_running()
+    print("job's DONE!")
+
+    return
 
 @instances.command('list')
 @click.option('--project', default=None,
@@ -47,7 +124,11 @@ def stop_instances(project):
 
     for i in instances:
         print("Stopping {0}...".format(i.id))
-        i.stop()
+        try:
+            i.stop()
+        except botocore.exceptions.ClientError as e:
+            print("Could not stop {0}.".format(i.id) + str(e))
+            continue
     return
 
 @instances.command('start')
@@ -60,8 +141,12 @@ def start_instances(project):
 
     for i in instances:
         print("Starting {0}...".format(i.id))
-        i.start()
+        try:
+            i.start()
+        except botocore.exceptions.ClientError as e:
+            print("Could not start {0}.".format(i.id) + str(e))
+            continue
     return
 
 if __name__ == '__main__':
-    instances()
+    cli()
